@@ -17,6 +17,50 @@ const Base64 = struct {
     fn _char_at(self: Base64, index: usize) u8 {
         return self._table[index];
     }
+
+    fn encode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+        if (input.len == 0) {
+            return "";
+        }
+
+        const len = try _calc_encode_length(input);
+        const out = try allocator.alloc(u8, len);
+        var buf = [_]u8{ 0, 0, 0 };
+        var count: u64 = 0;
+        var iout: u64 = 0;
+
+        for (input, 0..) |_, i| {
+            buf[count] = input[i];
+            count += 1;
+
+            if (count == 3) {
+                out[iout] = self._char_at(buf[0] >> 2);
+                out[iout + 1] = self._char_at(((buf[0] & 0b00000111) << 4) + (buf[1] >> 4));
+                out[iout + 2] = self._char_at(((buf[1] & 0b00001111) << 2) + (buf[2] >> 6));
+                out[iout + 3] = self._char_at(buf[2] & 0b01111111);
+                iout += 4;
+                count = 0;
+            }
+        }
+
+        if (count == 1) {
+            out[iout] = self._char_at(buf[0] >> 2);
+            out[iout + 1] = self._char_at((buf[0] & 0b00000111) << 4);
+            out[iout + 2] = '=';
+            out[iout + 3] = '=';
+            iout += 4;
+        }
+
+        if (count == 2) {
+            out[iout] = self._char_at(buf[0] >> 2);
+            out[iout + 1] = self._char_at(((buf[0] & 0b00000111) << 4) + (buf[1] >> 4));
+            out[iout + 2] = self._char_at((buf[1] & 0b00001111) << 2);
+            out[iout + 3] = '=';
+            iout += 4;
+        }
+
+        return out;
+    }
 };
 
 /// Calculates number of bytes required to encode an input to Base64.
@@ -57,8 +101,13 @@ fn _calc_decode_length(input: []const u8) !usize {
 
 pub fn main() !void {
     const base64 = Base64.init();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
 
-    std.debug.print("Char at index 28: {c}\n", .{base64._char_at(28)});
+    const out = try base64.encode(allocator, "Hi");
+    defer allocator.free(out);
+
+    std.debug.print("{s}\n", .{out});
 }
 
 test "encode length for input with length less than 3" {
@@ -83,4 +132,15 @@ test "decode length handles padding accordingly" {
     const in = "SGVsbG8=";
     const out = try _calc_decode_length(in);
     try testing.expectEqual(out, 5);
+}
+
+test "expexted encoded string returned" {
+    const allocator = std.testing.allocator;
+    const in = "Hi";
+
+    const base64 = Base64.init();
+    const out = try base64.encode(allocator, in);
+    defer allocator.free(out);
+
+    try testing.expectEqualStrings("SGk=", out);
 }

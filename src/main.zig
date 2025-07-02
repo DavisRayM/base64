@@ -18,6 +18,24 @@ const Base64 = struct {
         return self._table[index];
     }
 
+    fn _char_index(self: Base64, char: u8) u8 {
+        if (char == '=') {
+            return 64;
+        }
+
+        var index: u8 = 0;
+
+        for (0..63) |i| {
+            if (self._char_at(i) == char) {
+                break;
+            }
+
+            index += 1;
+        }
+
+        return index;
+    }
+
     fn encode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]u8 {
         if (input.len == 0) {
             return "";
@@ -35,9 +53,9 @@ const Base64 = struct {
 
             if (count == 3) {
                 out[iout] = self._char_at(buf[0] >> 2);
-                out[iout + 1] = self._char_at(((buf[0] & 0b00000111) << 4) + (buf[1] >> 4));
-                out[iout + 2] = self._char_at(((buf[1] & 0b00001111) << 2) + (buf[2] >> 6));
-                out[iout + 3] = self._char_at(buf[2] & 0b01111111);
+                out[iout + 1] = self._char_at(((buf[0] & 0b0000_0011) << 4) + (buf[1] >> 4));
+                out[iout + 2] = self._char_at(((buf[1] & 0b0000_1111) << 2) + (buf[2] >> 6));
+                out[iout + 3] = self._char_at(buf[2] & 0b0011_1111);
                 iout += 4;
                 count = 0;
             }
@@ -45,7 +63,7 @@ const Base64 = struct {
 
         if (count == 1) {
             out[iout] = self._char_at(buf[0] >> 2);
-            out[iout + 1] = self._char_at((buf[0] & 0b00000111) << 4);
+            out[iout + 1] = self._char_at((buf[0] & 0b0000_0011) << 4);
             out[iout + 2] = '=';
             out[iout + 3] = '=';
             iout += 4;
@@ -53,10 +71,42 @@ const Base64 = struct {
 
         if (count == 2) {
             out[iout] = self._char_at(buf[0] >> 2);
-            out[iout + 1] = self._char_at(((buf[0] & 0b00000111) << 4) + (buf[1] >> 4));
-            out[iout + 2] = self._char_at((buf[1] & 0b00001111) << 2);
+            out[iout + 1] = self._char_at(((buf[0] & 0b0000_0011) << 4) + (buf[1] >> 4));
+            out[iout + 2] = self._char_at((buf[1] & 0b0000_1111) << 2);
             out[iout + 3] = '=';
             iout += 4;
+        }
+
+        return out;
+    }
+
+    fn decode(self: Base64, allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+        if (input.len == 0) {
+            return "";
+        }
+
+        const len = try _calc_decode_length(input);
+        const out = try allocator.alloc(u8, len);
+        var buf = [_]u8{ 0, 0, 0, 0 };
+        var iout: u64 = 0;
+        var count: u64 = 0;
+
+        for (0..input.len) |i| {
+            buf[count] = self._char_index(input[i]);
+            count += 1;
+
+            if (count == 4) {
+                out[iout] = (buf[0] << 2) + (buf[1] >> 4);
+                if (buf[2] != 64) {
+                    out[iout + 1] = (buf[1] << 4) + (buf[2] >> 2);
+                }
+                if (buf[3] != 64) {
+                    out[iout + 2] = (buf[2] << 6) + buf[3];
+                }
+
+                iout += 3;
+                count = 0;
+            }
         }
 
         return out;
@@ -135,7 +185,7 @@ test "decode length handles padding accordingly" {
 }
 
 test "expexted encoded string returned" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     const in = "Hi";
 
     const base64 = Base64.init();
@@ -143,4 +193,18 @@ test "expexted encoded string returned" {
     defer allocator.free(out);
 
     try testing.expectEqualStrings("SGk=", out);
+}
+
+test "decodes string correctly" {
+    const allocator = testing.allocator;
+    const expected = "Hello there";
+
+    const base64 = Base64.init();
+    const encoded = try base64.encode(allocator, expected);
+    defer allocator.free(encoded);
+
+    const out = try base64.decode(allocator, encoded);
+    defer allocator.free(out);
+
+    try testing.expectEqualStrings(expected, out);
 }
